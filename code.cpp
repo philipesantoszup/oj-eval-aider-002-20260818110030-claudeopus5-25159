@@ -1,6 +1,106 @@
-#include "include/int2048.h"
+// int2048 - big integer with addition, subtraction, multiplication, division.
+//
+// This file is the single-file version used for Online Judge submission.
+// It is the concatenation of `src/include/int2048.h` and `src/int2048.cpp`.
+//
+// NOTE: this file must never define SJTU_BIGINTEGER: that macro belongs to
+// `src/include/int2048.h` alone. Defining it here would suppress the header's
+// class declaration whenever both files are processed together.
+
+#ifndef SJTU_BIGINTEGER_SINGLE_FILE
+#define SJTU_BIGINTEGER_SINGLE_FILE
+
+#include <complex>
+#include <cstdio>
+#include <cstring>
+#include <iostream>
+#include <string>
+#include <vector>
 
 namespace sjtu {
+
+class int2048 {
+private:
+  // Absolute value of the number, stored little-endian in base 1000.
+  // An empty vector represents zero (then `sign` is always 1).
+  std::vector<int> num;
+  // 1 for non-negative numbers, -1 for negative numbers.
+  int sign;
+
+  // Remove leading zero limbs and normalize the sign of zero.
+  void trim();
+  // Decimal representation of the number.
+  std::string toString() const;
+  // Three-way comparison: -1 / 0 / 1.
+  static int compare(const int2048 &lhs, const int2048 &rhs);
+  // quot = floor(lhs / rhs) (rounded toward negative infinity),
+  // rem  = lhs - quot * rhs.
+  static void divmod(const int2048 &lhs, const int2048 &rhs, int2048 &quot,
+                     int2048 &rem);
+
+public:
+  // Constructors
+  int2048();
+  int2048(long long value);
+  int2048(const std::string &str);
+  int2048(const int2048 &other);
+  int2048(int2048 &&other) noexcept;
+  ~int2048() = default;
+
+  // ===================================
+  // Integer1
+  // ===================================
+
+  // Read a big integer
+  void read(const std::string &str);
+  // Output the stored big integer, no need for newline
+  void print();
+
+  // Add a big integer
+  int2048 &add(const int2048 &rhs);
+  // Return the sum of two big integers
+  friend int2048 add(int2048 lhs, const int2048 &rhs);
+
+  // Subtract a big integer
+  int2048 &minus(const int2048 &rhs);
+  // Return the difference of two big integers
+  friend int2048 minus(int2048 lhs, const int2048 &rhs);
+
+  // ===================================
+  // Integer2
+  // ===================================
+
+  int2048 operator+() const;
+  int2048 operator-() const;
+
+  int2048 &operator=(const int2048 &other);
+  int2048 &operator=(int2048 &&other) noexcept;
+
+  int2048 &operator+=(const int2048 &rhs);
+  friend int2048 operator+(int2048 lhs, const int2048 &rhs);
+
+  int2048 &operator-=(const int2048 &rhs);
+  friend int2048 operator-(int2048 lhs, const int2048 &rhs);
+
+  int2048 &operator*=(const int2048 &rhs);
+  friend int2048 operator*(int2048 lhs, const int2048 &rhs);
+
+  int2048 &operator/=(const int2048 &rhs);
+  friend int2048 operator/(int2048 lhs, const int2048 &rhs);
+
+  int2048 &operator%=(const int2048 &rhs);
+  friend int2048 operator%(int2048 lhs, const int2048 &rhs);
+
+  friend std::istream &operator>>(std::istream &is, int2048 &value);
+  friend std::ostream &operator<<(std::ostream &os, const int2048 &value);
+
+  friend bool operator==(const int2048 &lhs, const int2048 &rhs);
+  friend bool operator!=(const int2048 &lhs, const int2048 &rhs);
+  friend bool operator<(const int2048 &lhs, const int2048 &rhs);
+  friend bool operator>(const int2048 &lhs, const int2048 &rhs);
+  friend bool operator<=(const int2048 &lhs, const int2048 &rhs);
+  friend bool operator>=(const int2048 &lhs, const int2048 &rhs);
+};
 
 // =====================================================================
 // Internal helpers operating on raw magnitude vectors (base 1000).
@@ -14,9 +114,9 @@ const int WIDTH = 3;
 typedef std::vector<int> Vec;
 
 // Thresholds tuned for the judge limits.
-const size_t kNaiveMulLimit = 64;   // schoolbook multiplication below this
-const int kNaiveDivLimit = 64;      // schoolbook division below this
-const int kRecipBase = 40;          // base case of the Newton recursion
+const size_t kNaiveMulLimit = 64;  // schoolbook multiplication below this
+const int kNaiveDivLimit = 64;     // schoolbook division below this
+const int kRecipBase = 40;         // base case of the Newton recursion
 const long long kNaiveDivWork = 5000000LL;
 
 void trimVec(Vec &a) {
@@ -139,8 +239,7 @@ void fft(std::vector<Cpx> &a) {
   }
 
   std::vector<int> rev(n);
-  for (int i = 0; i < n; ++i)
-    rev[i] = (rev[i >> 1] | ((i & 1) << lg)) >> 1;
+  for (int i = 0; i < n; ++i) rev[i] = (rev[i >> 1] | ((i & 1) << lg)) >> 1;
   for (int i = 0; i < n; ++i)
     if (i < rev[i]) {
       Cpx t = a[i];
@@ -260,8 +359,7 @@ void divmodNaive(const Vec &a, const Vec &b, Vec &q, Vec &r) {
     long long qhat = top / v[n - 1];
     long long rhat = top - qhat * v[n - 1];
     while (true) {
-      if (qhat >= BASE ||
-          qhat * v[n - 2] > rhat * BASE + u[j + n - 2]) {
+      if (qhat >= BASE || qhat * v[n - 2] > rhat * BASE + u[j + n - 2]) {
         --qhat;
         rhat += v[n - 1];
         if (rhat < BASE) continue;
@@ -323,7 +421,7 @@ Vec recipVec(const Vec &b) {
     return q;
   }
 
-  const int m = n / 2 + 3;  // number of kept high limbs, guarantees 2m >= n + 5
+  const int m = n / 2 + 3;  // kept high limbs, guarantees 2m >= n + 5
   const int s = n - m;
   Vec bh(b.begin() + s, b.end());
   Vec rh = recipVec(bh);
@@ -519,13 +617,13 @@ void int2048::divmod(const int2048 &lhs, const int2048 &rhs, int2048 &quot,
 
 int2048::int2048() : sign(1) {}
 
-int2048::int2048(long long x) : sign(1) {
+int2048::int2048(long long value) : sign(1) {
   unsigned long long v;
-  if (x < 0) {
+  if (value < 0) {
     sign = -1;
-    v = static_cast<unsigned long long>(-(x + 1)) + 1ULL;
+    v = static_cast<unsigned long long>(-(value + 1)) + 1ULL;
   } else {
-    v = static_cast<unsigned long long>(x);
+    v = static_cast<unsigned long long>(value);
   }
   while (v) {
     num.push_back(static_cast<int>(v % BASE));
@@ -534,7 +632,7 @@ int2048::int2048(long long x) : sign(1) {
   if (num.empty()) sign = 1;
 }
 
-int2048::int2048(const std::string &s) : sign(1) { read(s); }
+int2048::int2048(const std::string &str) : sign(1) { read(str); }
 
 int2048::int2048(const int2048 &other) : num(other.num), sign(other.sign) {}
 
@@ -544,22 +642,22 @@ int2048::int2048(int2048 &&other) noexcept : sign(other.sign) {
   other.sign = 1;
 }
 
-void int2048::read(const std::string &s) {
+void int2048::read(const std::string &str) {
   num.clear();
   sign = 1;
-  const int len = static_cast<int>(s.size());
+  const int len = static_cast<int>(str.size());
   int i = 0;
-  while (i < len && (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' ||
-                     s[i] == '\r'))
+  while (i < len && (str[i] == ' ' || str[i] == '\t' || str[i] == '\n' ||
+                     str[i] == '\r'))
     ++i;
-  if (i < len && (s[i] == '-' || s[i] == '+')) {
-    if (s[i] == '-') sign = -1;
+  if (i < len && (str[i] == '-' || str[i] == '+')) {
+    if (str[i] == '-') sign = -1;
     ++i;
   }
   int start = i;
-  while (i < len && s[i] >= '0' && s[i] <= '9') ++i;
+  while (i < len && str[i] >= '0' && str[i] <= '9') ++i;
   const int end = i;
-  while (start < end && s[start] == '0') ++start;
+  while (start < end && str[start] == '0') ++start;
   if (start >= end) {
     sign = 1;
     return;
@@ -569,7 +667,7 @@ void int2048::read(const std::string &s) {
     int lo = p - WIDTH;
     if (lo < start) lo = start;
     int v = 0;
-    for (int j = lo; j < p; ++j) v = v * 10 + (s[j] - '0');
+    for (int j = lo; j < p; ++j) v = v * 10 + (str[j] - '0');
     num.push_back(v);
   }
   trim();
@@ -736,14 +834,14 @@ int2048 operator%(int2048 lhs, const int2048 &rhs) {
   return lhs;
 }
 
-std::istream &operator>>(std::istream &is, int2048 &x) {
+std::istream &operator>>(std::istream &is, int2048 &value) {
   std::string s;
-  if (is >> s) x.read(s);
+  if (is >> s) value.read(s);
   return is;
 }
 
-std::ostream &operator<<(std::ostream &os, const int2048 &x) {
-  os << x.toString();
+std::ostream &operator<<(std::ostream &os, const int2048 &value) {
+  os << value.toString();
   return os;
 }
 
@@ -771,4 +869,6 @@ bool operator>=(const int2048 &lhs, const int2048 &rhs) {
   return int2048::compare(lhs, rhs) >= 0;
 }
 
-} // namespace sjtu
+}  // namespace sjtu
+
+#endif  // SJTU_BIGINTEGER_SINGLE_FILE
