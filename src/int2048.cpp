@@ -15,9 +15,9 @@ typedef std::vector<int> Vec;
 
 // Thresholds tuned for the judge limits.
 const size_t kNaiveMulLimit = 64;   // schoolbook multiplication below this
-const int kNaiveDivLimit = 64;      // schoolbook division below this
+const int kNaiveDivLimit = 32;      // schoolbook division below this
 const int kRecipBase = 40;          // base case of the Newton recursion
-const long long kNaiveDivWork = 5000000LL;
+const long long kNaiveDivWork = 1500000LL;
 
 void trimVec(Vec &a) {
   while (!a.empty() && a.back() == 0) a.pop_back();
@@ -125,6 +125,7 @@ void fft(std::vector<Cpx> &a) {
   int lg = 0;
   while ((1 << (lg + 1)) <= n) ++lg;
 
+  // Twiddle factors, grown lazily and shared between calls.
   static std::vector<Cpx> rt(2, Cpx(1.0, 0.0));
   static int built = 2;
   if (n > static_cast<int>(rt.size())) {
@@ -138,9 +139,14 @@ void fft(std::vector<Cpx> &a) {
     }
   }
 
-  std::vector<int> rev(n);
-  for (int i = 0; i < n; ++i)
-    rev[i] = (rev[i >> 1] | ((i & 1) << lg)) >> 1;
+  // Bit-reversal permutation table, cached per transform length.
+  static std::vector<int> rev;
+  static int revLg = -1;
+  if (revLg != lg) {
+    rev.assign(n, 0);
+    for (int i = 1; i < n; ++i) rev[i] = (rev[i >> 1] | ((i & 1) << lg)) >> 1;
+    revLg = lg;
+  }
   for (int i = 0; i < n; ++i)
     if (i < rev[i]) {
       Cpx t = a[i];
@@ -179,28 +185,38 @@ Vec mulNaive(const Vec &a, const Vec &b) {
   return r;
 }
 
+// Both operands are packed into one complex array, the whole convolution is
+// then performed in a single buffer to keep the memory footprint low.
 Vec mulFFT(const Vec &a, const Vec &b) {
   const int rs = static_cast<int>(a.size() + b.size()) - 1;
   int n = 1;
   while (n < rs) n <<= 1;
 
-  std::vector<Cpx> in(n), out(n);
-  for (size_t i = 0; i < a.size(); ++i) in[i].x = a[i];
-  for (size_t i = 0; i < b.size(); ++i) in[i].y = b[i];
-  fft(in);
-  for (int i = 0; i < n; ++i) in[i] = cmul(in[i], in[i]);
-  for (int i = 0; i < n; ++i)
-    out[i] = csub(in[(n - i) & (n - 1)], cconj(in[i]));
-  in.clear();
-  in.shrink_to_fit();
-  fft(out);
+  std::vector<Cpx> f(n);
+  for (size_t i = 0; i < a.size(); ++i) f[i].x = a[i];
+  for (size_t i = 0; i < b.size(); ++i) f[i].y = b[i];
+  fft(f);
+  for (int i = 0; i < n; ++i) f[i] = cmul(f[i], f[i]);
+
+  // In-place extraction: g[i] = f[(n - i) % n] - conj(f[i]).
+  for (int i = 0; i <= n / 2; ++i) {
+    const int j = (n - i) & (n - 1);
+    if (i == j) {
+      f[i] = Cpx(0.0, 2.0 * f[i].y);
+    } else {
+      const Cpx ai = f[i], aj = f[j];
+      f[i] = csub(aj, cconj(ai));
+      f[j] = csub(ai, cconj(aj));
+    }
+  }
+  fft(f);
 
   const double scale = 1.0 / (4.0 * n);
   Vec res;
   res.reserve(rs + 2);
   long long carry = 0;
   for (int i = 0; i < rs; ++i) {
-    long long v = static_cast<long long>(out[i].y * scale + 0.5) + carry;
+    long long v = static_cast<long long>(f[i].y * scale + 0.5) + carry;
     res.push_back(static_cast<int>(v % BASE));
     carry = v / BASE;
   }
@@ -214,6 +230,8 @@ Vec mulFFT(const Vec &a, const Vec &b) {
 
 Vec mulVec(const Vec &a, const Vec &b) {
   if (a.empty() || b.empty()) return Vec();
+  if (b.size() == 1) return mulSmall(a, b[0]);
+  if (a.size() == 1) return mulSmall(b, a[0]);
   const size_t mn = a.size() < b.size() ? a.size() : b.size();
   if (mn <= kNaiveMulLimit) return mulNaive(a, b);
   return mulFFT(a, b);
