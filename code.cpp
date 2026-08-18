@@ -534,9 +534,40 @@ void divmodVec(const Vec &a, const Vec &b, Vec &q, Vec &r) {
   }
   const int n = static_cast<int>(b.size());
   const int an = static_cast<int>(a.size());
+  const int m = an - n + 1;  // upper bound on the number of quotient limbs
   if (n <= kNaiveDivLimit ||
-      static_cast<long long>(an - n + 1) * n <= kNaiveDivWork) {
+      static_cast<long long>(m) * n <= kNaiveDivWork) {
     divmodNaive(a, b, q, r);
+    return;
+  }
+
+  // The quotient is far shorter than the divisor: only the leading m + 2
+  // limbs of both operands can influence it. Divide the truncated operands
+  // (a cheap, small division) and repair the provable O(1) error with a
+  // single full-size product. This keeps the cost proportional to the
+  // quotient length instead of the divisor length.
+  if (m + 2 < n) {
+    const int k = n - (m + 2);
+    Vec ah(a.begin() + k, a.end());
+    Vec bh(b.begin() + k, b.end());
+    Vec qh, rh;
+    divmodVec(ah, bh, qh, rh);
+
+    const Vec one(1, 1);
+    Vec p = mulVec(qh, b);
+    while (cmpVec(p, a) > 0) {
+      subFrom(p, b);
+      subFrom(qh, one);
+    }
+    Vec rr = a;
+    subFrom(rr, p);
+    while (cmpVec(rr, b) >= 0) {
+      subFrom(rr, b);
+      addTo(qh, one);
+    }
+    trimVec(qh);
+    q.swap(qh);
+    r.swap(rr);
     return;
   }
 
