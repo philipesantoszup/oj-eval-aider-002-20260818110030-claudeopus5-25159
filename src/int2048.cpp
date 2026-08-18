@@ -329,8 +329,16 @@ void divmodNaive(const Vec &a, const Vec &b, Vec &q, Vec &r) {
   r = divSmall(rr, d);
 }
 
-// Returns floor(BASE^(2n) / b), where n = b.size().
-Vec recipVec(const Vec &b) {
+// Approximation of floor(BASE^(2n) / b), where n = b.size().
+//
+// The returned value differs from the exact reciprocal by only a couple of
+// units: r0 has a relative error of about BASE^(-m) and the recursion keeps
+// 2m >= n + 5, so a single Newton step leaves an error far below one limb;
+// only the truncations of the integer computation remain. `divBlock` below is
+// written to tolerate such a small error, which lets us skip the (expensive)
+// exact verification of the iteration - one full-size multiplication and its
+// correction loops per recursion level.
+Vec recipApprox(const Vec &b) {
   const int n = static_cast<int>(b.size());
   Vec pow2n(2 * n + 1, 0);
   pow2n[2 * n] = 1;
@@ -344,61 +352,52 @@ Vec recipVec(const Vec &b) {
   const int m = n / 2 + 3;  // number of kept high limbs, guarantees 2m >= n + 5
   const int s = n - m;
   Vec bh(b.begin() + s, b.end());
-  Vec rh = recipVec(bh);
+  Vec rh = recipApprox(bh);
 
   Vec r0(s, 0);
   r0.insert(r0.end(), rh.begin(), rh.end());
   trimVec(r0);
+  Vec().swap(rh);
 
   // One Newton step: x <- x + x * (BASE^(2n) - x * b) / BASE^(2n)
   Vec res = r0;
   Vec p = mulVec(r0, b);
   const int c = cmpVec(p, pow2n);
-  if (c < 0) {
-    Vec e = pow2n;
-    subFrom(e, p);
-    Vec t = mulVec(r0, e);
-    Vec delta;
-    if (static_cast<int>(t.size()) > 2 * n)
-      delta.assign(t.begin() + 2 * n, t.end());
-    trimVec(delta);
-    addTo(res, delta);
-  } else if (c > 0) {
-    Vec e = p;
-    subFrom(e, pow2n);
-    Vec t = mulVec(r0, e);
-    Vec delta;
-    if (static_cast<int>(t.size()) > 2 * n)
-      delta.assign(t.begin() + 2 * n, t.end());
-    trimVec(delta);
-    if (cmpVec(res, delta) <= 0)
-      res.clear();
-    else
-      subFrom(res, delta);
-  }
-
-  // Fix the remaining O(1) error.
-  const Vec one(1, 1);
-  p = mulVec(res, b);
-  while (cmpVec(p, pow2n) > 0) {
-    subFrom(p, b);
-    subFrom(res, one);
-  }
-  while (true) {
-    Vec next = p;
-    addTo(next, b);
-    if (cmpVec(next, pow2n) <= 0) {
-      p.swap(next);
-      addTo(res, one);
+  if (c != 0) {
+    Vec e;
+    if (c < 0) {
+      e = pow2n;
+      subFrom(e, p);
     } else {
-      break;
+      e.swap(p);
+      subFrom(e, pow2n);
+    }
+    Vec().swap(p);
+    Vec t = mulVec(r0, e);
+    Vec().swap(e);
+    Vec delta;
+    if (static_cast<int>(t.size()) > 2 * n)
+      delta.assign(t.begin() + 2 * n, t.end());
+    Vec().swap(t);
+    trimVec(delta);
+    if (c < 0) {
+      addTo(res, delta);
+    } else if (cmpVec(res, delta) <= 0) {
+      res.clear();
+    } else {
+      subFrom(res, delta);
     }
   }
   return res;
 }
 
-// Divides u (at most 2n limbs, u < b * BASE^n) by b using a precomputed
-// reciprocal rc = floor(BASE^(2n) / b).
+// Divides u (at most 2n limbs, u < b * BASE^n) by b using an approximate
+// reciprocal rc ~ BASE^(2n) / b.
+//
+// Only the leading n + 2 limbs of u can influence the quotient by more than
+// one unit, so the estimate is computed from the truncated dividend: the
+// product shrinks from 2n x n limbs to (n + 2) x n limbs. The remaining O(1)
+// error is repaired by the correction loops.
 void divBlock(const Vec &u, const Vec &b, const Vec &rc, Vec &q, Vec &r) {
   const int n = static_cast<int>(b.size());
   q.clear();
@@ -406,12 +405,34 @@ void divBlock(const Vec &u, const Vec &b, const Vec &rc, Vec &q, Vec &r) {
     r = u;
     return;
   }
-  Vec t = mulVec(u, rc);
-  if (static_cast<int>(t.size()) > 2 * n)
-    q.assign(t.begin() + 2 * n, t.end());
+  const int au = static_cast<int>(u.size());
+  int k = au - (n + 2);
+  if (k < 0) k = 0;
+
+  Vec t;
+  if (k > 0) {
+    Vec uh(u.begin() + k, u.end());
+    t = mulVec(uh, rc);
+  } else {
+    t = mulVec(u, rc);
+  }
+  const int shift = 2 * n - k;
+  if (static_cast<int>(t.size()) > shift)
+    q.assign(t.begin() + shift, t.end());
+  Vec().swap(t);
   trimVec(q);
 
   const Vec one(1, 1);
+  if (q.empty()) {
+    // The quotient is tiny; a couple of subtractions settle it.
+    r = u;
+    while (cmpVec(r, b) >= 0) {
+      subFrom(r, b);
+      addTo(q, one);
+    }
+    return;
+  }
+
   Vec p = mulVec(q, b);
   while (cmpVec(p, u) > 0) {
     subFrom(p, b);
@@ -419,6 +440,7 @@ void divBlock(const Vec &u, const Vec &b, const Vec &rc, Vec &q, Vec &r) {
   }
   r = u;
   subFrom(r, p);
+  Vec().swap(p);
   while (cmpVec(r, b) >= 0) {
     subFrom(r, b);
     addTo(q, one);
@@ -453,6 +475,9 @@ void divmodVec(const Vec &a, const Vec &b, Vec &q, Vec &r) {
     Vec bh(b.begin() + k, b.end());
     Vec qh, rh;
     divmodVec(ah, bh, qh, rh);
+    Vec().swap(ah);
+    Vec().swap(bh);
+    Vec().swap(rh);
 
     const Vec one(1, 1);
     Vec p = mulVec(qh, b);
@@ -462,6 +487,7 @@ void divmodVec(const Vec &a, const Vec &b, Vec &q, Vec &r) {
     }
     Vec rr = a;
     subFrom(rr, p);
+    Vec().swap(p);
     while (cmpVec(rr, b) >= 0) {
       subFrom(rr, b);
       addTo(qh, one);
@@ -472,7 +498,7 @@ void divmodVec(const Vec &a, const Vec &b, Vec &q, Vec &r) {
     return;
   }
 
-  const Vec rc = recipVec(b);
+  const Vec rc = recipApprox(b);
   const int chunk = n;
   const int blocks = (an + chunk - 1) / chunk;
   q.assign(an, 0);
